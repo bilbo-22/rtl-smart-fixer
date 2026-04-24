@@ -96,7 +96,10 @@
     settings: { ...DEFAULT_SETTINGS },
     effective: { enabled: true, mode: "smart", inputSupport: true },
     observer: null,
-    scheduled: false,
+    queuedElements: new Set(),
+    queueScheduled: false,
+    elementCache: new WeakMap(),
+    nativeRtlSkipped: false,
     fixedCount: 0,
     lastRunAt: null
   };
@@ -143,21 +146,38 @@
     stopObserver();
 
     state.observer = new MutationObserver((mutations) => {
+      let hasQueuedWork = false;
+
       for (const mutation of mutations) {
-        if (mutation.type === "childList" || mutation.type === "characterData") {
-          scheduleScan();
-          return;
+        if (mutation.type === "attributes") {
+          if (mutation.attributeName === "dir" && pageHasNativeRtl()) {
+            skipNativeRtlPage();
+            return;
+          }
+
+          hasQueuedWork = enqueueElement(mutation.target) || hasQueuedWork;
+          continue;
         }
 
-        if (mutation.type === "attributes" && isCandidateElement(mutation.target)) {
-          processElement(mutation.target);
+        if (mutation.type === "characterData") {
+          hasQueuedWork = enqueueNode(mutation.target) || hasQueuedWork;
+          continue;
+        }
+
+        if (mutation.type === "childList") {
+          hasQueuedWork = enqueueElement(mutation.target) || hasQueuedWork;
+          for (const node of mutation.addedNodes) {
+            hasQueuedWork = enqueueNode(node) || hasQueuedWork;
+          }
         }
       }
+
+      if (hasQueuedWork) scheduleQueuedProcessing();
     });
 
     state.observer.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ["placeholder", "value"],
+      attributeFilter: ["dir", "placeholder", "value"],
       childList: true,
       characterData: true,
       subtree: true
@@ -171,14 +191,22 @@
     }
   }
 
-  function scheduleScan() {
-    if (state.scheduled || !state.effective.enabled) return;
+  function scheduleQueuedProcessing() {
+    if (state.queueScheduled || !state.effective.enabled) return;
 
-    state.scheduled = true;
-    window.setTimeout(() => {
-      state.scheduled = false;
-      scanDocument();
-    }, 120);
+    state.queueScheduled = true;
+
+    const run = (deadline) => {
+      state.queueScheduled = false;
+      processQueuedElements(deadline);
+    };
+
+    if (window.requestIdleCallback) {
+      window.requestIdleCallback(run, { timeout: 500 });
+      return;
+    }
+
+    window.setTimeout(run, 120);
   }
 
   function countMatches(text, pattern) {
@@ -193,8 +221,24 @@
       .trim();
   }
 
-  function classifyText(text) {
-    const normalized = normalizeText(text);
+  function isRtlDirection(value) {
+    return String(value || "").toLowerCase() === "rtl";
+  }
+
+  function pageHasNativeRtl() {
+    const root = document.documentElement;
+    const body = document.body;
+    if (!root) return false;
+
+    if (isRtlDirection(root.getAttribute("dir")) || isRtlDirection(body && body.getAttribute("dir"))) {
+      return true;
+    }
+
+    return isRtlDirection(window.getComputedStyle(root).direction) ||
+      (body ? isRtlDirection(window.getComputedStyle(body).direction) : false);
+  }
+
+  function classifyText(normalized) {
     if (!normalized || !RTL_RE.test(normalized)) return null;
 
     const rtlCount = countMatches(normalized, RTL_GLOBAL_RE);
@@ -232,10 +276,39 @@
     if (!(element instanceof HTMLElement)) return false;
     if (SKIP_TAGS.has(element.tagName)) return false;
     if (element.closest("[data-rtl-smart-ignore], pre, code, kbd, samp, svg, canvas")) return false;
-    if (!isVisible(element)) return false;
+    if (isRtlDirection(element.getAttribute("dir"))) return false;
     if (!state.effective.inputSupport && (element.tagName === "INPUT" || element.tagName === "TEXTAREA")) return false;
     if (!isSupportedInput(element)) return false;
     return true;
+  }
+
+  function enqueueElement(element) {
+    if (!state.effective.enabled || !(element instanceof HTMLElement) || !element.isConnected) return false;
+
+    let queued = false;
+    if (element.matches(TEXT_SELECTOR)) {
+      state.queuedElements.add(element);
+      queued = true;
+    }
+
+    return queued;
+  }
+
+  function enqueueNode(node) {
+    if (!state.effective.enabled || !node) return false;
+
+    if (node.nodeType === Node.TEXT_NODE) {
+      return enqueueElement(node.parentElement);
+    }
+
+    if (!(node instanceof HTMLElement) || !node.isConnected) return false;
+
+    let queued = enqueueElement(node);
+    for (const element of node.querySelectorAll(TEXT_SELECTOR)) {
+      queued = enqueueElement(element) || queued;
+    }
+
+    return queued;
   }
 
   function getElementText(element) {
@@ -294,17 +367,46 @@
 
     const text = getElementText(element);
     const normalized = normalizeText(text);
-    if (!normalized || shouldAvoidBroadContainer(element, normalized)) {
+    if (!normalized) {
       resetElement(element);
       return;
     }
 
+    const cacheKey = `${state.effective.mode}\n${normalized}`;
+    if (state.elementCache.get(element) === cacheKey) return;
+
     const direction = classifyText(normalized);
-    if (direction) {
-      applyDirection(element, direction);
-    } else {
+    if (!direction || shouldAvoidBroadContainer(element, normalized) || !isVisible(element)) {
       resetElement(element);
+      state.elementCache.set(element, cacheKey);
+      return;
     }
+
+    applyDirection(element, direction);
+    state.elementCache.set(element, cacheKey);
+  }
+
+  function processQueuedElements(deadline) {
+    const maxBatchSize = 250;
+    let processed = 0;
+
+    while (state.queuedElements.size > 0) {
+      if (processed >= maxBatchSize) break;
+      if (deadline && !deadline.didTimeout && deadline.timeRemaining && deadline.timeRemaining() < 4) break;
+
+      const element = state.queuedElements.values().next().value;
+      state.queuedElements.delete(element);
+      processElement(element);
+      processed += 1;
+    }
+
+    if (state.queuedElements.size > 0) {
+      scheduleQueuedProcessing();
+      return;
+    }
+
+    state.fixedCount = document.body ? document.body.querySelectorAll(`[${APPLIED_ATTR}]`).length : 0;
+    state.lastRunAt = new Date().toISOString();
   }
 
   function scanDocument() {
@@ -321,17 +423,35 @@
 
   function cleanupDocument() {
     stopObserver();
+    state.queuedElements.clear();
+    state.queueScheduled = false;
+    state.elementCache = new WeakMap();
+    state.nativeRtlSkipped = false;
     document.querySelectorAll(`[${APPLIED_ATTR}]`).forEach(resetElement);
     state.fixedCount = 0;
     state.lastRunAt = new Date().toISOString();
   }
 
+  function skipNativeRtlPage() {
+    cleanupDocument();
+    state.nativeRtlSkipped = true;
+  }
+
   function applySettings(settings) {
     state.settings = mergeSettings(settings);
     state.effective = computeEffectiveSettings(state.settings);
+    state.queuedElements.clear();
+    state.queueScheduled = false;
+    state.elementCache = new WeakMap();
+    state.nativeRtlSkipped = false;
 
     if (!state.effective.enabled) {
       cleanupDocument();
+      return;
+    }
+
+    if (pageHasNativeRtl()) {
+      skipNativeRtlPage();
       return;
     }
 
@@ -345,6 +465,7 @@
       effective: state.effective,
       hostname: getHostname(),
       fixedCount: state.fixedCount,
+      nativeRtlSkipped: state.nativeRtlSkipped,
       lastRunAt: state.lastRunAt
     });
   }

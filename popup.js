@@ -101,12 +101,23 @@ function sendSettingsToTab() {
     .catch(() => null);
 }
 
+function updateStatus(status, prefix) {
+  if (status && status.nativeRtlSkipped) {
+    elements.status.textContent = "האתר כבר מוגדר RTL, אז התוסף לא מריץ תיקונים בעמוד הזה.";
+    return;
+  }
+
+  if (status && typeof status.fixedCount === "number") {
+    elements.status.textContent = `${prefix} ${status.fixedCount} אלמנטים בעמוד.`;
+  }
+}
+
 async function persistAndApply() {
   await saveSettings(settings);
   const status = await sendSettingsToTab();
 
-  if (status && typeof status.fixedCount === "number") {
-    elements.status.textContent = `תוקנו ${status.fixedCount} אלמנטים בעמוד.`;
+  if (status) {
+    updateStatus(status, "תוקנו");
   } else {
     elements.status.textContent = "ההגדרות נשמרו. אם זה קובץ מקומי, צריך לאפשר לתוסף גישה ל־file URLs.";
   }
@@ -135,7 +146,9 @@ async function requestStatus() {
 
   try {
     const status = await chrome.tabs.sendMessage(activeTab.id, { type: MESSAGE_GET_STATUS });
-    if (status && typeof status.fixedCount === "number") {
+    if (status && status.nativeRtlSkipped) {
+      elements.status.textContent = "האתר כבר מוגדר RTL, אז התוסף לא מריץ תיקונים בעמוד הזה.";
+    } else if (status && typeof status.fixedCount === "number") {
       elements.status.textContent = `פעיל עכשיו: ${status.effective.enabled ? "כן" : "לא"} · ${status.fixedCount} אלמנטים תוקנו.`;
     }
   } catch (_error) {

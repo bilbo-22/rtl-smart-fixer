@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RTL Smart Fixer</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="popup">
+      <header>
+        <h1>RTL Smart Fixer</h1>
+        <p id="site-label">טוען...</p>
+      </header>
+
+      <label class="row">
+        <span>הפעלה כללית</span>
+        <input id="enabled" type="checkbox" />
+      </label>
+
+      <label class="field">
+        <span>האתר הנוכחי</span>
+        <select id="site-mode">
+          <option value="inherit">לפי ההגדרה הכללית</option>
+          <option value="on">מופעל באתר הזה</option>
+          <option value="off">כבוי באתר הזה</option>
+        </select>
+      </label>
+
+      <label class="field">
+        <span>רמת תיקון</span>
+        <select id="mode">
+          <option value="smart">חכם</option>
+          <option value="aggressive">אגרסיבי</option>
+        </select>
+      </label>
+
+      <label class="row">
+        <span>תיקון שדות כתיבה</span>
+        <input id="input-support" type="checkbox" />
+      </label>
+
+      <button id="rescan" type="button">סרוק שוב</button>
+
+      <p id="status" class="status"></p>
+    </main>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

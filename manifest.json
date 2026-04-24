@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "RTL Smart Fixer",
+  "version": "0.1.0",
+  "description": "Smart right-to-left fixes for Hebrew and Arabic text on sites that do not handle RTL well.",
+  "permissions": ["activeTab", "storage"],
+  "action": {
+    "default_title": "RTL Smart Fixer",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["rtl-fixer.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}

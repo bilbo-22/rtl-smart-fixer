@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RTL Smart Fixer Test Page</title>
+    <style>
+      body {
+        max-width: 880px;
+        margin: 40px auto;
+        padding: 0 20px;
+        color: #17212b;
+        font: 16px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      section {
+        margin-block: 24px;
+        padding-block: 16px;
+        border-block-start: 1px solid #dce1e7;
+      }
+
+      .box {
+        max-width: 620px;
+        padding: 14px;
+        border: 1px solid #cdd5df;
+        border-radius: 8px;
+      }
+
+      input,
+      textarea {
+        width: 100%;
+        margin-block: 8px;
+        padding: 10px;
+        border: 1px solid #cdd5df;
+        border-radius: 6px;
+        font: inherit;
+      }
+
+      code {
+        display: block;
+        padding: 12px;
+        border-radius: 6px;
+        background: #eef1f4;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>RTL Smart Fixer Test Page</h1>
+
+    <section>
+      <h2>English content should stay LTR</h2>
+      <p>This paragraph is plain English and should not be touched by the extension.</p>
+    </section>
+
+    <section>
+      <h2>Hebrew content inside an LTR page</h2>
+      <div class="box">
+        <p>זה משפט בעברית בתוך אתר שמוגדר באנגלית, והוא אמור להיות מיושר לימין בצורה נקייה.</p>
+        <p>Mixed text: הנה משפט עם English words, מספרים 123, וקישור https://example.com באמצע.</p>
+        <button>כפתור בעברית</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Inputs</h2>
+      <input type="text" placeholder="כתוב כאן טקסט בעברית" />
+      <textarea rows="4">טקסט התחלתי בעברית בתוך textarea.</textarea>
+    </section>
+
+    <section>
+      <h2>Code should not change</h2>
+      <code>const message = "שלום"; // keep this code block LTR</code>
+    </section>
+  </body>
+</html>

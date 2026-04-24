@@ -155,6 +155,10 @@
             return;
           }
 
+          if (mutation.attributeName === "dir" && mutation.target instanceof HTMLElement && mutation.target.hasAttribute(APPLIED_ATTR)) {
+            continue;
+          }
+
           hasQueuedWork = enqueueElement(mutation.target) || hasQueuedWork;
           continue;
         }
@@ -276,7 +280,7 @@
     if (!(element instanceof HTMLElement)) return false;
     if (SKIP_TAGS.has(element.tagName)) return false;
     if (element.closest("[data-rtl-smart-ignore], pre, code, kbd, samp, svg, canvas")) return false;
-    if (isRtlDirection(element.getAttribute("dir"))) return false;
+    if (isRtlDirection(element.getAttribute("dir")) && !element.hasAttribute(APPLIED_ATTR)) return false;
     if (!state.effective.inputSupport && (element.tagName === "INPUT" || element.tagName === "TEXTAREA")) return false;
     if (!isSupportedInput(element)) return false;
     return true;
@@ -313,7 +317,7 @@
 
   function getElementText(element) {
     if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
-      return `${element.value || ""} ${element.getAttribute("placeholder") || ""}`;
+      return element.value.trim() || element.getAttribute("placeholder") || "";
     }
 
     return element.textContent || "";

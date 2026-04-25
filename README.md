@@ -17,7 +17,8 @@ For local files like `test-page.html`, open the extension details page and enabl
 - Applies `dir="rtl"` only to text-like elements that appear to need it.
 - Leaves code blocks, scripts, SVG, media, URL-heavy text, and unsupported input types alone.
 - Watches dynamic pages with `MutationObserver`.
-- Supports global on/off, per-site on/off, smart/aggressive modes, and input-field fixes.
+- Runs only on sites explicitly enabled from the popup.
+- Supports a master switch, per-site on/off, smart/aggressive modes, and input-field fixes.
 
 ## Test
 

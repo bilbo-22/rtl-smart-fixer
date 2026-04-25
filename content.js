@@ -99,7 +99,6 @@
     queuedElements: new Set(),
     queueScheduled: false,
     elementCache: new WeakMap(),
-    nativeRtlSkipped: false,
     fixedCount: 0,
     lastRunAt: null
   };
@@ -123,7 +122,7 @@
     const site = settings.siteOverrides[getHostname()] || {};
 
     return {
-      enabled: site.enabled ?? settings.enabled,
+      enabled: settings.enabled && site.enabled === true,
       mode: site.mode || settings.mode,
       inputSupport: settings.inputSupport
     };
@@ -150,11 +149,6 @@
 
       for (const mutation of mutations) {
         if (mutation.type === "attributes") {
-          if (mutation.attributeName === "dir" && pageHasNativeRtl()) {
-            skipNativeRtlPage();
-            return;
-          }
-
           if (mutation.attributeName === "dir" && mutation.target instanceof HTMLElement && mutation.target.hasAttribute(APPLIED_ATTR)) {
             continue;
           }
@@ -227,19 +221,6 @@
 
   function isRtlDirection(value) {
     return String(value || "").toLowerCase() === "rtl";
-  }
-
-  function pageHasNativeRtl() {
-    const root = document.documentElement;
-    const body = document.body;
-    if (!root) return false;
-
-    if (isRtlDirection(root.getAttribute("dir")) || isRtlDirection(body && body.getAttribute("dir"))) {
-      return true;
-    }
-
-    return isRtlDirection(window.getComputedStyle(root).direction) ||
-      (body ? isRtlDirection(window.getComputedStyle(body).direction) : false);
   }
 
   function classifyText(normalized) {
@@ -430,15 +411,9 @@
     state.queuedElements.clear();
     state.queueScheduled = false;
     state.elementCache = new WeakMap();
-    state.nativeRtlSkipped = false;
     document.querySelectorAll(`[${APPLIED_ATTR}]`).forEach(resetElement);
     state.fixedCount = 0;
     state.lastRunAt = new Date().toISOString();
-  }
-
-  function skipNativeRtlPage() {
-    cleanupDocument();
-    state.nativeRtlSkipped = true;
   }
 
   function applySettings(settings) {
@@ -447,15 +422,9 @@
     state.queuedElements.clear();
     state.queueScheduled = false;
     state.elementCache = new WeakMap();
-    state.nativeRtlSkipped = false;
 
     if (!state.effective.enabled) {
       cleanupDocument();
-      return;
-    }
-
-    if (pageHasNativeRtl()) {
-      skipNativeRtlPage();
       return;
     }
 
@@ -469,7 +438,6 @@
       effective: state.effective,
       hostname: getHostname(),
       fixedCount: state.fixedCount,
-      nativeRtlSkipped: state.nativeRtlSkipped,
       lastRunAt: state.lastRunAt
     });
   }

@@ -102,8 +102,13 @@ function sendSettingsToTab() {
 }
 
 function updateStatus(status, prefix) {
-  if (status && status.nativeRtlSkipped) {
-    elements.status.textContent = "האתר כבר מוגדר RTL, אז התוסף לא מריץ תיקונים בעמוד הזה.";
+  if (status && status.settings && !status.settings.enabled) {
+    elements.status.textContent = "המתג הראשי כבוי.";
+    return;
+  }
+
+  if (status && status.effective && !status.effective.enabled) {
+    elements.status.textContent = "כבוי באתר הזה. כדי להפעיל, בחרו \"מופעל באתר הזה\".";
     return;
   }
 
@@ -146,8 +151,10 @@ async function requestStatus() {
 
   try {
     const status = await chrome.tabs.sendMessage(activeTab.id, { type: MESSAGE_GET_STATUS });
-    if (status && status.nativeRtlSkipped) {
-      elements.status.textContent = "האתר כבר מוגדר RTL, אז התוסף לא מריץ תיקונים בעמוד הזה.";
+    if (status && status.settings && !status.settings.enabled) {
+      elements.status.textContent = "המתג הראשי כבוי.";
+    } else if (status && status.effective && !status.effective.enabled) {
+      elements.status.textContent = "כבוי באתר הזה. כדי להפעיל, בחרו \"מופעל באתר הזה\".";
     } else if (status && typeof status.fixedCount === "number") {
       elements.status.textContent = `פעיל עכשיו: ${status.effective.enabled ? "כן" : "לא"} · ${status.fixedCount} אלמנטים תוקנו.`;
     }

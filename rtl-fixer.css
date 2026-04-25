@@ -6,10 +6,22 @@
   text-align: right !important;
 }
 
+.rtl-smart-fixed[dir="ltr"] {
+  text-align: left !important;
+}
+
 input.rtl-smart-fixed[dir="rtl"],
 textarea.rtl-smart-fixed[dir="rtl"],
 [contenteditable].rtl-smart-fixed[dir="rtl"],
 [role="textbox"].rtl-smart-fixed[dir="rtl"] {
   direction: rtl !important;
   text-align: right !important;
+}
+
+input.rtl-smart-fixed[dir="ltr"],
+textarea.rtl-smart-fixed[dir="ltr"],
+[contenteditable].rtl-smart-fixed[dir="ltr"],
+[role="textbox"].rtl-smart-fixed[dir="ltr"] {
+  direction: ltr !important;
+  text-align: left !important;
 }

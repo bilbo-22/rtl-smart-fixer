@@ -42,6 +42,10 @@
         border-radius: 6px;
         background: #eef1f4;
       }
+
+      .rtl-wrapper {
+        direction: rtl;
+      }
     </style>
   </head>
   <body>
@@ -70,6 +74,21 @@
     <section>
       <h2>Code should not change</h2>
       <code>const message = "שלום"; // keep this code block LTR</code>
+    </section>
+
+    <section>
+      <h2>English blocks inside an RTL response should recover</h2>
+      <div class="box rtl-wrapper">
+        <p>כן. הייתי ממקם את זה כ-not another networking event, אלא כ-a playful way to meet real people in Lisbon.</p>
+        <h3>Meetup title ideas</h3>
+        <ol>
+          <li>Playful Networking Lisbon: Meet New People Through Theatre Games</li>
+          <li>Make Friends in Lisbon: Improv Games & Real Conversations</li>
+          <li>The Social Warm-Up: A Networking Event Without Awkward Small Talk</li>
+        </ol>
+        <h3>Short Meetup description</h3>
+        <p>Join us for a playful networking evening in Lisbon designed to help you meet new people naturally.</p>
+      </div>
     </section>
   </body>
 </html>

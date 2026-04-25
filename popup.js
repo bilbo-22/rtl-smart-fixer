@@ -1,5 +1,4 @@
 const DEFAULT_SETTINGS = {
-  enabled: true,
   mode: "smart",
   inputSupport: true,
   siteOverrides: {}
@@ -9,12 +8,11 @@ const MESSAGE_GET_STATUS = "RTL_SMART_GET_STATUS";
 const MESSAGE_APPLY_SETTINGS = "RTL_SMART_APPLY_SETTINGS";
 
 const elements = {
-  enabled: document.getElementById("enabled"),
   inputSupport: document.getElementById("input-support"),
   mode: document.getElementById("mode"),
   rescan: document.getElementById("rescan"),
   siteLabel: document.getElementById("site-label"),
-  siteMode: document.getElementById("site-mode"),
+  siteEnabled: document.getElementById("site-enabled"),
   status: document.getElementById("status")
 };
 
@@ -67,21 +65,26 @@ function getHostname(tab) {
   }
 }
 
-function siteOverrideValue() {
+function isSiteEnabled() {
   const override = settings.siteOverrides[hostname];
-  if (!override || typeof override.enabled === "undefined") return "inherit";
-  return override.enabled ? "on" : "off";
+  return override && override.enabled === true;
+}
+
+function isUnsupportedPage() {
+  return !activeTab || !hostname || /^chrome:|^edge:|^about:/.test(activeTab.url || "");
 }
 
 function render() {
-  elements.enabled.checked = settings.enabled;
-  elements.inputSupport.checked = settings.inputSupport;
+  if (elements.inputSupport) {
+    elements.inputSupport.checked = settings.inputSupport;
+  }
+
   elements.mode.value = settings.mode;
-  elements.siteMode.value = siteOverrideValue();
+  elements.siteEnabled.checked = isSiteEnabled();
   elements.siteLabel.textContent = hostname ? hostname : "לא זמין בעמוד הזה";
 
-  const unsupported = !activeTab || !hostname || /^chrome:|^edge:|^about:/.test(activeTab.url || "");
-  for (const control of [elements.enabled, elements.inputSupport, elements.mode, elements.siteMode, elements.rescan]) {
+  const unsupported = isUnsupportedPage();
+  for (const control of [elements.siteEnabled, elements.inputSupport, elements.mode, elements.rescan].filter(Boolean)) {
     control.disabled = unsupported;
   }
 
@@ -102,13 +105,8 @@ function sendSettingsToTab() {
 }
 
 function updateStatus(status, prefix) {
-  if (status && status.settings && !status.settings.enabled) {
-    elements.status.textContent = "המתג הראשי כבוי.";
-    return;
-  }
-
   if (status && status.effective && !status.effective.enabled) {
-    elements.status.textContent = "כבוי באתר הזה. כדי להפעיל, בחרו \"מופעל באתר הזה\".";
+    elements.status.textContent = "כבוי באתר הזה. כדי להפעיל, הדליקו את \"פעיל באתר הזה\".";
     return;
   }
 
@@ -128,22 +126,26 @@ async function persistAndApply() {
   }
 }
 
-function updateSiteOverride(value) {
+function updateSiteOverride(enabled) {
+  if (!hostname) return false;
+
   const nextOverrides = { ...settings.siteOverrides };
 
-  if (value === "inherit") {
-    delete nextOverrides[hostname];
-  } else {
+  if (enabled) {
     nextOverrides[hostname] = {
       ...(nextOverrides[hostname] || {}),
-      enabled: value === "on"
+      enabled: true
     };
+  } else {
+    delete nextOverrides[hostname];
   }
 
   settings = {
     ...settings,
     siteOverrides: nextOverrides
   };
+
+  return true;
 }
 
 async function requestStatus() {
@@ -151,10 +153,8 @@ async function requestStatus() {
 
   try {
     const status = await chrome.tabs.sendMessage(activeTab.id, { type: MESSAGE_GET_STATUS });
-    if (status && status.settings && !status.settings.enabled) {
-      elements.status.textContent = "המתג הראשי כבוי.";
-    } else if (status && status.effective && !status.effective.enabled) {
-      elements.status.textContent = "כבוי באתר הזה. כדי להפעיל, בחרו \"מופעל באתר הזה\".";
+    if (status && status.effective && !status.effective.enabled) {
+      elements.status.textContent = "כבוי באתר הזה. כדי להפעיל, הדליקו את \"פעיל באתר הזה\".";
     } else if (status && typeof status.fixedCount === "number") {
       elements.status.textContent = `פעיל עכשיו: ${status.effective.enabled ? "כן" : "לא"} · ${status.fixedCount} אלמנטים תוקנו.`;
     }
@@ -163,23 +163,25 @@ async function requestStatus() {
   }
 }
 
-elements.enabled.addEventListener("change", () => {
-  settings = { ...settings, enabled: elements.enabled.checked };
-  persistAndApply();
-});
-
-elements.inputSupport.addEventListener("change", () => {
-  settings = { ...settings, inputSupport: elements.inputSupport.checked };
-  persistAndApply();
-});
+if (elements.inputSupport) {
+  elements.inputSupport.addEventListener("change", () => {
+    settings = { ...settings, inputSupport: elements.inputSupport.checked };
+    persistAndApply();
+  });
+}
 
 elements.mode.addEventListener("change", () => {
   settings = { ...settings, mode: elements.mode.value };
   persistAndApply();
 });
 
-elements.siteMode.addEventListener("change", () => {
-  updateSiteOverride(elements.siteMode.value);
+elements.siteEnabled.addEventListener("change", () => {
+  if (!updateSiteOverride(elements.siteEnabled.checked)) {
+    elements.siteEnabled.checked = false;
+    elements.status.textContent = "לא ניתן להפעיל את התוסף בעמוד הזה.";
+    return;
+  }
+
   persistAndApply();
 });
 

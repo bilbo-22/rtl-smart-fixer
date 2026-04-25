@@ -1,6 +1,5 @@
 (() => {
   const DEFAULT_SETTINGS = {
-    enabled: true,
     mode: "smart",
     inputSupport: true,
     siteOverrides: {}
@@ -14,6 +13,7 @@
 
   const RTL_RE = /[\u0590-\u05FF\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/u;
   const RTL_GLOBAL_RE = /[\u0590-\u05FF\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/gu;
+  const LATIN_RE = /[A-Za-z]/u;
   const LATIN_GLOBAL_RE = /[A-Za-z]/g;
   const LETTER_GLOBAL_RE = /\p{L}/gu;
   const FIRST_STRONG_RE = /[A-Za-z\u0590-\u05FF\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/u;
@@ -122,7 +122,7 @@
     const site = settings.siteOverrides[getHostname()] || {};
 
     return {
-      enabled: settings.enabled && site.enabled === true,
+      enabled: site.enabled === true,
       mode: site.mode || settings.mode,
       inputSupport: settings.inputSupport
     };
@@ -153,7 +153,8 @@
             continue;
           }
 
-          hasQueuedWork = enqueueElement(mutation.target) || hasQueuedWork;
+          const queueMutationTarget = mutation.attributeName === "dir" ? enqueueNode : enqueueElement;
+          hasQueuedWork = queueMutationTarget(mutation.target) || hasQueuedWork;
           continue;
         }
 
@@ -223,9 +224,15 @@
     return String(value || "").toLowerCase() === "rtl";
   }
 
-  function classifyText(normalized) {
-    if (!normalized || !RTL_RE.test(normalized)) return null;
+  function getAmbientDirection(element) {
+    if (element.hasAttribute(APPLIED_ATTR) && element.parentElement) {
+      return window.getComputedStyle(element.parentElement).direction;
+    }
 
+    return window.getComputedStyle(element).direction;
+  }
+
+  function classifyRtlText(normalized) {
     const rtlCount = countMatches(normalized, RTL_GLOBAL_RE);
     const latinCount = countMatches(normalized, LATIN_GLOBAL_RE);
     const letterCount = countMatches(normalized, LETTER_GLOBAL_RE);
@@ -238,6 +245,27 @@
     if (rtlCount >= 4 && rtlCount >= latinCount * 0.5) return "rtl";
 
     return null;
+  }
+
+  function classifyLtrText(normalized, ambientDirection) {
+    if (!LATIN_RE.test(normalized)) return null;
+    if (ambientDirection !== "rtl") return null;
+
+    const firstStrong = normalized.match(FIRST_STRONG_RE);
+    if (!firstStrong || !LATIN_RE.test(firstStrong[0])) return null;
+
+    const latinCount = countMatches(normalized, LATIN_GLOBAL_RE);
+    const letterCount = countMatches(normalized, LETTER_GLOBAL_RE);
+    if (letterCount === 0) return null;
+
+    return latinCount >= 2 && latinCount / letterCount >= 0.6 ? "ltr" : null;
+  }
+
+  function classifyText(normalized, ambientDirection) {
+    if (!normalized) return null;
+    if (RTL_RE.test(normalized)) return classifyRtlText(normalized);
+
+    return classifyLtrText(normalized, ambientDirection);
   }
 
   function isSupportedInput(element) {
@@ -357,10 +385,11 @@
       return;
     }
 
-    const cacheKey = `${state.effective.mode}\n${normalized}`;
+    const ambientDirection = getAmbientDirection(element);
+    const cacheKey = `${state.effective.mode}\n${ambientDirection}\n${normalized}`;
     if (state.elementCache.get(element) === cacheKey) return;
 
-    const direction = classifyText(normalized);
+    const direction = classifyText(normalized, ambientDirection);
     if (!direction || shouldAvoidBroadContainer(element, normalized) || !isVisible(element)) {
       resetElement(element);
       state.elementCache.set(element, cacheKey);
@@ -462,7 +491,7 @@
   if (chrome.storage && chrome.storage.onChanged) {
     chrome.storage.onChanged.addListener((changes, areaName) => {
       if (areaName !== "sync") return;
-      if (!changes.enabled && !changes.mode && !changes.inputSupport && !changes.siteOverrides) return;
+      if (!changes.mode && !changes.inputSupport && !changes.siteOverrides) return;
 
       loadSettings().then(applySettings);
     });

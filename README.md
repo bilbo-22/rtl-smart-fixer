@@ -15,10 +15,11 @@ For local files like `test-page.html`, open the extension details page and enabl
 
 - Detects Hebrew and Arabic text with Unicode-aware heuristics.
 - Applies `dir="rtl"` only to text-like elements that appear to need it.
+- Applies `dir="ltr"` to clearly English text blocks only when they are inside an RTL context.
 - Leaves code blocks, scripts, SVG, media, URL-heavy text, and unsupported input types alone.
 - Watches dynamic pages with `MutationObserver`.
 - Runs only on sites explicitly enabled from the popup.
-- Supports a master switch, per-site on/off, smart/aggressive modes, and input-field fixes.
+- Supports a per-site enable toggle, smart/aggressive modes, and input-field fixes.
 
 ## Test
 

@@ -10,6 +10,10 @@
   const APPLIED_ATTR = "data-rtl-smart-applied";
   const PREV_DIR_ATTR = "data-rtl-smart-prev-dir";
   const FIXED_CLASS = "rtl-smart-fixed";
+  const MUTATION_DEBOUNCE_MS = 90;
+  const RESET_GRACE_MS = 450;
+  const RESUME_SCAN_DELAY_MS = 900;
+  const SCROLL_SCAN_DELAY_MS = 260;
 
   const RTL_RE = /[\u0590-\u05FF\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/u;
   const RTL_GLOBAL_RE = /[\u0590-\u05FF\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/gu;
@@ -98,6 +102,11 @@
     observer: null,
     queuedElements: new Set(),
     queueScheduled: false,
+    queueTimer: null,
+    idleCallbackId: null,
+    resumeScanTimer: null,
+    scrollScanTimer: null,
+    pendingResetTimers: new Map(),
     elementCache: new WeakMap(),
     fixedCount: 0,
     lastRunAt: null
@@ -145,6 +154,13 @@
     stopObserver();
 
     state.observer = new MutationObserver((mutations) => {
+      if (isProcessingPaused()) {
+        state.queuedElements.clear();
+        clearQueuedProcessing();
+        clearPendingResets();
+        return;
+      }
+
       let hasQueuedWork = false;
 
       for (const mutation of mutations) {
@@ -190,22 +206,141 @@
     }
   }
 
-  function scheduleQueuedProcessing() {
-    if (state.queueScheduled || !state.effective.enabled) return;
+  function clearQueuedProcessing() {
+    if (state.queueTimer !== null) {
+      window.clearTimeout(state.queueTimer);
+      state.queueTimer = null;
+    }
 
+    if (state.idleCallbackId !== null && window.cancelIdleCallback) {
+      window.cancelIdleCallback(state.idleCallbackId);
+      state.idleCallbackId = null;
+    }
+
+    state.queueScheduled = false;
+  }
+
+  function clearResumeScan() {
+    if (state.resumeScanTimer === null) return;
+
+    window.clearTimeout(state.resumeScanTimer);
+    state.resumeScanTimer = null;
+  }
+
+  function clearScrollScan() {
+    if (state.scrollScanTimer === null) return;
+
+    window.clearTimeout(state.scrollScanTimer);
+    state.scrollScanTimer = null;
+  }
+
+  function isProcessingPaused() {
+    return document.hidden || state.resumeScanTimer !== null || state.scrollScanTimer !== null;
+  }
+
+  function scheduleQueuedProcessing(delay = MUTATION_DEBOUNCE_MS) {
+    if (!state.effective.enabled || isProcessingPaused()) return;
+
+    clearQueuedProcessing();
     state.queueScheduled = true;
 
     const run = (deadline) => {
+      state.idleCallbackId = null;
       state.queueScheduled = false;
       processQueuedElements(deadline);
     };
 
-    if (window.requestIdleCallback) {
-      window.requestIdleCallback(run, { timeout: 500 });
+    state.queueTimer = window.setTimeout(() => {
+      state.queueTimer = null;
+
+      if (window.requestIdleCallback) {
+        state.idleCallbackId = window.requestIdleCallback(run, { timeout: 500 });
+        return;
+      }
+
+      run();
+    }, delay);
+  }
+
+  function scheduleResumeScan() {
+    if (!state.effective.enabled || document.hidden) return;
+
+    clearQueuedProcessing();
+    clearPendingResets();
+    clearResumeScan();
+    state.queuedElements.clear();
+
+    state.resumeScanTimer = window.setTimeout(() => {
+      state.resumeScanTimer = null;
+      scanDocument();
+    }, RESUME_SCAN_DELAY_MS);
+  }
+
+  function scheduleScrollScan() {
+    if (!state.effective.enabled || document.hidden) return;
+
+    clearQueuedProcessing();
+    clearPendingResets();
+    clearScrollScan();
+    state.queuedElements.clear();
+
+    state.scrollScanTimer = window.setTimeout(() => {
+      state.scrollScanTimer = null;
+      scanDocument();
+    }, SCROLL_SCAN_DELAY_MS);
+  }
+
+  function clearPendingResets() {
+    for (const timer of state.pendingResetTimers.values()) {
+      window.clearTimeout(timer);
+    }
+
+    state.pendingResetTimers.clear();
+  }
+
+  function cancelPendingReset(element) {
+    const timer = state.pendingResetTimers.get(element);
+    if (timer === undefined) return;
+
+    window.clearTimeout(timer);
+    state.pendingResetTimers.delete(element);
+  }
+
+  function deferResetElement(element, cacheKey) {
+    if (!element.hasAttribute(APPLIED_ATTR)) {
+      state.elementCache.set(element, cacheKey);
       return;
     }
 
-    window.setTimeout(run, 120);
+    if (state.pendingResetTimers.has(element)) {
+      state.elementCache.set(element, cacheKey);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      state.pendingResetTimers.delete(element);
+
+      if (!element.isConnected) return;
+
+      const text = getElementText(element);
+      const normalized = normalizeText(text);
+      const ambientDirection = getAmbientDirection(element);
+      const nextCacheKey = `${state.effective.mode}\n${ambientDirection}\n${normalized}`;
+      const direction = classifyText(normalized, ambientDirection);
+
+      if (direction && !shouldAvoidBroadContainer(element, normalized) && isVisible(element)) {
+        applyDirection(element, direction);
+      } else {
+        resetElement(element);
+      }
+
+      state.elementCache.set(element, nextCacheKey);
+      state.fixedCount = document.body ? document.body.querySelectorAll(`[${APPLIED_ATTR}]`).length : 0;
+      state.lastRunAt = new Date().toISOString();
+    }, RESET_GRACE_MS);
+
+    state.pendingResetTimers.set(element, timer);
+    state.elementCache.set(element, cacheKey);
   }
 
   function countMatches(text, pattern) {
@@ -335,6 +470,7 @@
   function shouldAvoidBroadContainer(element, text) {
     if (state.effective.mode === "aggressive") return false;
     if (!BROAD_CONTAINER_TAGS.has(element.tagName)) return false;
+    if (element.matches("[aria-live], [role='log'], [role='status']")) return true;
     if (element.isContentEditable || element.getAttribute("role") === "textbox") return false;
     if (hasOwnText(element)) return false;
 
@@ -360,6 +496,8 @@
   function resetElement(element) {
     if (!element.hasAttribute(APPLIED_ATTR)) return;
 
+    cancelPendingReset(element);
+
     const previousDirection = element.getAttribute(PREV_DIR_ATTR);
     if (previousDirection) {
       element.setAttribute("dir", previousDirection);
@@ -374,6 +512,7 @@
 
   function processElement(element) {
     if (!isCandidateElement(element)) {
+      cancelPendingReset(element);
       resetElement(element);
       return;
     }
@@ -381,7 +520,7 @@
     const text = getElementText(element);
     const normalized = normalizeText(text);
     if (!normalized) {
-      resetElement(element);
+      deferResetElement(element, "");
       return;
     }
 
@@ -391,11 +530,11 @@
 
     const direction = classifyText(normalized, ambientDirection);
     if (!direction || shouldAvoidBroadContainer(element, normalized) || !isVisible(element)) {
-      resetElement(element);
-      state.elementCache.set(element, cacheKey);
+      deferResetElement(element, cacheKey);
       return;
     }
 
+    cancelPendingReset(element);
     applyDirection(element, direction);
     state.elementCache.set(element, cacheKey);
   }
@@ -415,7 +554,7 @@
     }
 
     if (state.queuedElements.size > 0) {
-      scheduleQueuedProcessing();
+      scheduleQueuedProcessing(0);
       return;
     }
 
@@ -438,7 +577,10 @@
   function cleanupDocument() {
     stopObserver();
     state.queuedElements.clear();
-    state.queueScheduled = false;
+    clearQueuedProcessing();
+    clearResumeScan();
+    clearScrollScan();
+    clearPendingResets();
     state.elementCache = new WeakMap();
     document.querySelectorAll(`[${APPLIED_ATTR}]`).forEach(resetElement);
     state.fixedCount = 0;
@@ -449,7 +591,10 @@
     state.settings = mergeSettings(settings);
     state.effective = computeEffectiveSettings(state.settings);
     state.queuedElements.clear();
-    state.queueScheduled = false;
+    clearQueuedProcessing();
+    clearResumeScan();
+    clearScrollScan();
+    clearPendingResets();
     state.elementCache = new WeakMap();
 
     if (!state.effective.enabled) {
@@ -496,6 +641,24 @@
       loadSettings().then(applySettings);
     });
   }
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      state.queuedElements.clear();
+      clearQueuedProcessing();
+      clearResumeScan();
+      clearScrollScan();
+      clearPendingResets();
+      return;
+    }
+
+    scheduleResumeScan();
+  });
+
+  document.addEventListener("scroll", scheduleScrollScan, {
+    capture: true,
+    passive: true
+  });
 
   document.addEventListener(
     "input",

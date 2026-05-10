@@ -13,7 +13,8 @@
   const MUTATION_DEBOUNCE_MS = 90;
   const RESET_GRACE_MS = 450;
   const RESUME_SCAN_DELAY_MS = 900;
-  const SCROLL_SCAN_DELAY_MS = 260;
+  const SCROLL_SCAN_DELAY_MS = 500;
+  const MAX_DIRECTION_CACHE_SIZE = 5000;
 
   const RTL_RE = /[\u0590-\u05FF\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/u;
   const RTL_GLOBAL_RE = /[\u0590-\u05FF\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/gu;
@@ -108,6 +109,7 @@
     scrollScanTimer: null,
     pendingResetTimers: new Map(),
     elementCache: new WeakMap(),
+    directionCache: new Map(),
     fixedCount: 0,
     lastRunAt: null
   };
@@ -154,10 +156,15 @@
     stopObserver();
 
     state.observer = new MutationObserver((mutations) => {
-      if (isProcessingPaused()) {
+      if (document.hidden) {
         state.queuedElements.clear();
         clearQueuedProcessing();
         clearPendingResets();
+        return;
+      }
+
+      if (state.resumeScanTimer !== null || state.scrollScanTimer !== null) {
+        processCachedMutations(mutations);
         return;
       }
 
@@ -290,6 +297,10 @@
     }, SCROLL_SCAN_DELAY_MS);
   }
 
+  function pauseForScroll() {
+    scheduleScrollScan();
+  }
+
   function clearPendingResets() {
     for (const timer of state.pendingResetTimers.values()) {
       window.clearTimeout(timer);
@@ -326,7 +337,7 @@
       const normalized = normalizeText(text);
       const ambientDirection = getAmbientDirection(element);
       const nextCacheKey = `${state.effective.mode}\n${ambientDirection}\n${normalized}`;
-      const direction = classifyText(normalized, ambientDirection);
+      const direction = getCachedDirection(nextCacheKey, normalized, ambientDirection);
 
       if (direction && !shouldAvoidBroadContainer(element, normalized) && isVisible(element)) {
         applyDirection(element, direction);
@@ -403,6 +414,24 @@
     return classifyLtrText(normalized, ambientDirection);
   }
 
+  function rememberDirection(cacheKey, direction) {
+    if (!state.directionCache.has(cacheKey) && state.directionCache.size >= MAX_DIRECTION_CACHE_SIZE) {
+      state.directionCache.delete(state.directionCache.keys().next().value);
+    }
+
+    state.directionCache.set(cacheKey, direction);
+  }
+
+  function getCachedDirection(cacheKey, normalized, ambientDirection) {
+    if (state.directionCache.has(cacheKey)) {
+      return state.directionCache.get(cacheKey);
+    }
+
+    const direction = classifyText(normalized, ambientDirection);
+    rememberDirection(cacheKey, direction);
+    return direction;
+  }
+
   function isSupportedInput(element) {
     if (element.tagName !== "INPUT") return true;
     return RTL_INPUT_TYPES.has((element.getAttribute("type") || "text").toLowerCase());
@@ -459,6 +488,55 @@
     return queued;
   }
 
+  function processCachedMutations(mutations) {
+    let processed = 0;
+    const maxCachedBatchSize = 250;
+
+    const processCachedNode = (node) => {
+      if (processed >= maxCachedBatchSize || !node) return;
+
+      if (node.nodeType === Node.TEXT_NODE) {
+        processCachedElement(node.parentElement);
+        processed += 1;
+        return;
+      }
+
+      if (!(node instanceof HTMLElement) || !node.isConnected) return;
+
+      if (node.matches(TEXT_SELECTOR)) {
+        processCachedElement(node);
+        processed += 1;
+      }
+
+      for (const element of node.querySelectorAll(TEXT_SELECTOR)) {
+        if (processed >= maxCachedBatchSize) break;
+        processCachedElement(element);
+        processed += 1;
+      }
+    };
+
+    for (const mutation of mutations) {
+      if (processed >= maxCachedBatchSize) break;
+
+      if (mutation.type === "characterData") {
+        processCachedNode(mutation.target);
+        continue;
+      }
+
+      if (mutation.type === "attributes") {
+        processCachedNode(mutation.target);
+        continue;
+      }
+
+      if (mutation.type === "childList") {
+        processCachedNode(mutation.target);
+        for (const node of mutation.addedNodes) {
+          processCachedNode(node);
+        }
+      }
+    }
+  }
+
   function getElementText(element) {
     if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
       return element.value.trim() || element.getAttribute("placeholder") || "";
@@ -510,16 +588,23 @@
     element.classList.remove(FIXED_CLASS);
   }
 
-  function processElement(element) {
+  function processCachedElement(element) {
+    processElement(element, { cachedOnly: true });
+  }
+
+  function processElement(element, options = {}) {
+    const cachedOnly = options.cachedOnly === true;
+
     if (!isCandidateElement(element)) {
       cancelPendingReset(element);
-      resetElement(element);
+      if (!cachedOnly) resetElement(element);
       return;
     }
 
     const text = getElementText(element);
     const normalized = normalizeText(text);
     if (!normalized) {
+      if (cachedOnly) return;
       deferResetElement(element, "");
       return;
     }
@@ -528,8 +613,14 @@
     const cacheKey = `${state.effective.mode}\n${ambientDirection}\n${normalized}`;
     if (state.elementCache.get(element) === cacheKey) return;
 
-    const direction = classifyText(normalized, ambientDirection);
+    if (cachedOnly && !state.directionCache.has(cacheKey)) return;
+
+    const direction = cachedOnly
+      ? state.directionCache.get(cacheKey)
+      : getCachedDirection(cacheKey, normalized, ambientDirection);
+
     if (!direction || shouldAvoidBroadContainer(element, normalized) || !isVisible(element)) {
+      if (cachedOnly) return;
       deferResetElement(element, cacheKey);
       return;
     }
@@ -582,6 +673,7 @@
     clearScrollScan();
     clearPendingResets();
     state.elementCache = new WeakMap();
+    state.directionCache.clear();
     document.querySelectorAll(`[${APPLIED_ATTR}]`).forEach(resetElement);
     state.fixedCount = 0;
     state.lastRunAt = new Date().toISOString();
@@ -596,6 +688,7 @@
     clearScrollScan();
     clearPendingResets();
     state.elementCache = new WeakMap();
+    state.directionCache.clear();
 
     if (!state.effective.enabled) {
       cleanupDocument();
@@ -655,7 +748,17 @@
     scheduleResumeScan();
   });
 
-  document.addEventListener("scroll", scheduleScrollScan, {
+  document.addEventListener("wheel", pauseForScroll, {
+    capture: true,
+    passive: true
+  });
+
+  document.addEventListener("touchmove", pauseForScroll, {
+    capture: true,
+    passive: true
+  });
+
+  document.addEventListener("scroll", pauseForScroll, {
     capture: true,
     passive: true
   });
